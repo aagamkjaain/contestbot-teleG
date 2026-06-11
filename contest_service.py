@@ -20,9 +20,9 @@ class ContestService:
             "Authorization": f"ApiKey {self.username}:{self.api_key}"
         }
     
-    def get_upcoming_contests(self, days_ahead=30, limit=300, force=False):
+    def get_upcoming_contests(self, days_ahead=30, limit=300, force=False, active=False):
         """
-        Fetch upcoming contests from CLIST API with a 5-minute cache cooldown unless forced
+        Fetch upcoming or active contests from CLIST API with a 5-minute cache cooldown unless forced
         """
         now = datetime.utcnow()
         if not force and ContestService._last_fetch_time and (now - ContestService._last_fetch_time) < timedelta(minutes=5):
@@ -31,11 +31,14 @@ class ContestService:
             
         try:
             params = {
-                "upcoming": "true",
                 "format": "json",
                 "limit": limit,
                 "order_by": "start"
             }
+            if active:
+                params["running"] = "true"
+            else:
+                params["upcoming"] = "true"
             
             headers = self._get_headers()
             response = requests.get(self.base_url, headers=headers, params=params, timeout=10)
@@ -51,9 +54,10 @@ class ContestService:
                 for contest in data["objects"]:
                     try:
                         start_time = datetime.fromisoformat(contest["start"].replace("Z", "+00:00"))
+                        end_time = datetime.fromisoformat(contest["end"].replace("Z", "+00:00")) if contest.get("end") else None
                         
-                        # Filter by days_ahead
-                        if start_time > datetime.now(start_time.tzinfo) + timedelta(days=days_ahead):
+                        # Filter by days_ahead if it is upcoming
+                        if not active and start_time > datetime.now(start_time.tzinfo) + timedelta(days=days_ahead):
                             continue
                         
                         resource_data = contest.get("resource", "Unknown")
@@ -77,6 +81,7 @@ class ContestService:
                             "name": contest.get("event"),
                             "platform": platform_name,
                             "start": start_time.isoformat(),
+                            "end": end_time.isoformat() if end_time else None,
                             "url": contest_url,
                             "duration": contest.get("duration"),
                             "difficulty": self._estimate_difficulty(platform_name)
@@ -113,18 +118,25 @@ class ContestService:
                     Contest.clist_id == contest_data["clist_id"]
                 ).first()
                 
+                start_time = datetime.fromisoformat(contest_data["start"])
+                end_time = datetime.fromisoformat(contest_data["end"]) if contest_data.get("end") else None
+                
                 if not existing:
-                    start_time = datetime.fromisoformat(contest_data["start"])
                     contest = Contest(
                         clist_id=contest_data["clist_id"],
                         name=contest_data["name"],
                         platform=contest_data["platform"],
                         start_time=start_time,
+                        end_time=end_time,
                         url=contest_data["url"],
                         duration=contest_data.get("duration"),
                         difficulty=contest_data.get("difficulty")
                     )
                     self.session.add(contest)
+                else:
+                    # Update fields that might have changed
+                    existing.start_time = start_time
+                    existing.end_time = end_time
             
             self.session.commit()
             return True
@@ -132,6 +144,20 @@ class ContestService:
             print(f"Error saving contests: {e}")
             self.session.rollback()
             return False
+
+    def get_active_contests(self):
+        """Get contests that are currently active (running)"""
+        now = datetime.utcnow()
+        try:
+            # Query contests where start_time <= now <= end_time
+            query = self.session.query(Contest).filter(
+                Contest.start_time <= now,
+                Contest.end_time >= now
+            )
+            return query.order_by(Contest.start_time).all()
+        except Exception as e:
+            print(f"Error getting active contests: {e}")
+            return []
     
     def get_contests_for_user(self, user_id, days_ahead=7):
         """Get contests filtered by user's subscriptions"""
