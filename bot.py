@@ -60,6 +60,7 @@ class ContestBot:
         self.application.add_handler(CommandHandler("upcoming30", self.competitions))
         self.application.add_handler(CommandHandler("dsa", self.dsa_competitions))
         self.application.add_handler(CommandHandler("dsa_competitions", self.dsa_competitions))
+        self.application.add_handler(CommandHandler("about", self.about_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
         
         # Callback query handlers for buttons
@@ -87,11 +88,22 @@ class ContestBot:
             "<b>Available Commands:</b>\n"
             "/competitions - Show all contests (next 30 days & active)\n"
             "/dsa - Show DSA-only contests (Codeforces, LeetCode, etc.)\n"
+            "/about - About the bot & developer info\n"
             "/help - Show help message\n"
         )
         
         await update.message.reply_text(message, parse_mode="HTML")
         
+    async def about_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /about command"""
+        about_text = (
+            "ℹ️ <b>About Contest Tracker Bot</b>\n\n"
+            "This bot tracks active/ongoing and upcoming programming contests across major platforms "
+            "like Codeforces, LeetCode, CodeChef, AtCoder, and more.\n\n"
+            "Developed with ❤️ by <a href='https://github.com/aagamkjaain'>aagamkjaain</a>."
+        )
+        await update.message.reply_text(about_text, parse_mode="HTML", disable_web_page_preview=True)
+
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /help command"""
         help_text = (
@@ -100,10 +112,12 @@ class ContestBot:
             "/start - Start the bot\n"
             "/competitions - Show all active and upcoming contests\n"
             "/dsa - Show DSA-only active and upcoming contests\n"
+            "/about - About the bot & developer info\n"
             "/help - Show this message\n\n"
-            "Use the buttons on the message to navigate pages, toggle between active/upcoming contests, filter DSA-only, and force-refresh the data."
+            "Use the buttons on the message to navigate pages, toggle between active/upcoming contests, filter DSA-only, and force-refresh the data.\n\n"
+            "🐙 <b>Developer Github:</b> <a href='https://github.com/aagamkjaain'>aagamkjaain</a>"
         )
-        await update.message.reply_text(help_text, parse_mode="HTML")
+        await update.message.reply_text(help_text, parse_mode="HTML", disable_web_page_preview=True)
 
     async def competitions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle competitions command (upcoming 30 days)"""
