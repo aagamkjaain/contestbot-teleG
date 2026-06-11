@@ -56,14 +56,30 @@ class ContestService:
                         if start_time > datetime.now(start_time.tzinfo) + timedelta(days=days_ahead):
                             continue
                         
+                        resource_data = contest.get("resource", "Unknown")
+                        if isinstance(resource_data, dict):
+                            resource_str = resource_data.get("name", "Unknown")
+                        else:
+                            resource_str = str(resource_data)
+                            
+                        # Clean the platform name to match standard platforms
+                        platform_name = resource_str
+                        resource_lower = resource_str.lower()
+                        for plat in ["Codeforces", "LeetCode", "CodeChef", "AtCoder", "TopCoder", "HackerEarth", "HackerRank"]:
+                            if plat.lower() in resource_lower:
+                                platform_name = plat
+                                break
+                        
+                        contest_url = contest.get("href") or contest.get("url") or ""
+                        
                         contest_dict = {
                             "clist_id": contest.get("id"),
                             "name": contest.get("event"),
-                            "platform": contest.get("resource", {}).get("name", "Unknown"),
+                            "platform": platform_name,
                             "start": start_time.isoformat(),
-                            "url": contest.get("url", ""),
+                            "url": contest_url,
                             "duration": contest.get("duration"),
-                            "difficulty": self._estimate_difficulty(contest.get("resource", {}).get("name", ""))
+                            "difficulty": self._estimate_difficulty(platform_name)
                         }
                         contests.append(contest_dict)
                     except Exception as e:
