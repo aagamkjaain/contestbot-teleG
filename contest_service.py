@@ -6,6 +6,7 @@ from database import Session, Contest, get_session
 
 class ContestService:
     """Service to fetch contests from CLIST API"""
+    _last_fetch_time = None  # Class-level cache timestamp
     
     def __init__(self):
         self.username = CLIST_USERNAME
@@ -19,17 +20,15 @@ class ContestService:
             "Authorization": f"ApiKey {self.username}:{self.api_key}"
         }
     
-    def get_upcoming_contests(self, days_ahead=30, limit=100):
+    def get_upcoming_contests(self, days_ahead=30, limit=300, force=False):
         """
-        Fetch upcoming contests from CLIST API
-        
-        Args:
-            days_ahead: Number of days to look ahead
-            limit: Maximum number of contests to fetch
+        Fetch upcoming contests from CLIST API with a 5-minute cache cooldown unless forced
+        """
+        now = datetime.utcnow()
+        if not force and ContestService._last_fetch_time and (now - ContestService._last_fetch_time) < timedelta(minutes=5):
+            print("Using cached contests in database (cooldown active)")
+            return []
             
-        Returns:
-            List of contest dictionaries
-        """
         try:
             params = {
                 "upcoming": "true",
@@ -41,6 +40,9 @@ class ContestService:
             headers = self._get_headers()
             response = requests.get(self.base_url, headers=headers, params=params, timeout=10)
             response.raise_for_status()
+            
+            # If fetch is successful, update the cache time
+            ContestService._last_fetch_time = now
             
             data = response.json()
             contests = []
@@ -145,6 +147,41 @@ class ContestService:
             return query.all()
         except Exception as e:
             print(f"Error fetching user contests: {e}")
+            return []
+
+    def get_filtered_contests(self, user_id=None, days_ahead=30, platform=None, difficulty=None, subscribed_only=False):
+        """
+        Get contests filtered by platform, difficulty, and timeframe
+        """
+        from database import User, Subscription
+        try:
+            # Query contests starting from now
+            query = self.session.query(Contest).filter(
+                Contest.start_time >= datetime.utcnow(),
+                Contest.start_time <= datetime.utcnow() + timedelta(days=days_ahead)
+            )
+            
+            # Subscribed only filter
+            if subscribed_only and user_id:
+                user = self.session.query(User).filter(User.telegram_id == user_id).first()
+                if user:
+                    subscribed_platforms = [
+                        sub.platform for sub in user.subscriptions if sub.subscribed
+                    ]
+                    if subscribed_platforms:
+                        query = query.filter(Contest.platform.in_(subscribed_platforms))
+            
+            # Specific platform filter
+            if platform and platform != "All":
+                query = query.filter(Contest.platform == platform)
+                
+            # Specific difficulty filter
+            if difficulty and difficulty != "All":
+                query = query.filter(Contest.difficulty == difficulty)
+                
+            return query.order_by(Contest.start_time).all()
+        except Exception as e:
+            print(f"Error in get_filtered_contests: {e}")
             return []
     
     def close(self):
