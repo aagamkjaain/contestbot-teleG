@@ -1,4 +1,7 @@
 import logging
+import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from datetime import datetime, timedelta
@@ -13,6 +16,29 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+
+class DummyHTTPHandler(BaseHTTPRequestHandler):
+    """Simple dummy handler for Render health checks"""
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+        
+    def log_message(self, format, *args):
+        # Suppress request logging to keep output clean
+        return
+
+
+def start_dummy_server():
+    """Start a dummy HTTP server in a daemon thread on $PORT"""
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyHTTPHandler)
+    logger.info(f"Starting dummy HTTP server on port {port} for Render health check...")
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    return server
 
 
 class ContestBot:
@@ -32,6 +58,8 @@ class ContestBot:
         self.application.add_handler(CommandHandler("show_competitions", self.competitions))
         self.application.add_handler(CommandHandler("upcoming", self.competitions))
         self.application.add_handler(CommandHandler("upcoming30", self.competitions))
+        self.application.add_handler(CommandHandler("dsa", self.dsa_competitions))
+        self.application.add_handler(CommandHandler("dsa_competitions", self.dsa_competitions))
         self.application.add_handler(CommandHandler("help", self.help_command))
         
         # Callback query handlers for buttons
@@ -57,7 +85,8 @@ class ContestBot:
             "🚀 <b>Welcome to Contest Tracker!</b>\n\n"
             "Track active/ongoing and upcoming programming contests.\n\n"
             "<b>Available Commands:</b>\n"
-            "/competitions - Show contests browser (next 30 days & active)\n"
+            "/competitions - Show all contests (next 30 days & active)\n"
+            "/dsa - Show DSA-only contests (Codeforces, LeetCode, etc.)\n"
             "/help - Show help message\n"
         )
         
@@ -69,9 +98,10 @@ class ContestBot:
             "🤖 <b>Contest Tracker Bot - Help</b>\n\n"
             "<b>Commands:</b>\n"
             "/start - Start the bot\n"
-            "/competitions - Show active and upcoming contests (aliases: /show_competitions, /upcoming)\n"
+            "/competitions - Show all active and upcoming contests\n"
+            "/dsa - Show DSA-only active and upcoming contests\n"
             "/help - Show this message\n\n"
-            "Use the buttons on the message to navigate pages, toggle between active/upcoming contests, and force-refresh the data."
+            "Use the buttons on the message to navigate pages, toggle between active/upcoming contests, filter DSA-only, and force-refresh the data."
         )
         await update.message.reply_text(help_text, parse_mode="HTML")
 
@@ -107,17 +137,60 @@ class ContestBot:
             is_edit=False
         )
 
+    async def dsa_competitions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle DSA-only competitions command"""
+        user_id = update.effective_user.id
+        
+        # Ensure user exists in database
+        session = get_session()
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            user = User(
+                telegram_id=user_id,
+                username=update.effective_user.username
+            )
+            session.add(user)
+            session.commit()
+        session.close()
+        
+        # Fetch upcoming contests first to ensure DB is populated
+        contests = self.contest_service.get_upcoming_contests(days_ahead=30, force=False, active=False)
+        self.contest_service.save_contests(contests)
+        
+        # Also fetch active contests to ensure DB has active ones populated
+        active_contests = self.contest_service.get_upcoming_contests(force=False, active=True)
+        self.contest_service.save_contests(active_contests)
+        
+        # Send interactive browser starting on page 0 with "dsa" status
+        await self.send_contests_browser(
+            update_or_query=update,
+            page=0,
+            status="dsa",
+            is_edit=False
+        )
+
     async def send_contests_browser(self, update_or_query, page=0, status="upcoming", is_edit=False):
         """Send or edit the interactive competitions browser message"""
         if status == "active":
-            contests = self.contest_service.get_active_contests()
+            contests = self.contest_service.get_active_contests(dsa_only=False)
+        elif status == "dsa_active":
+            contests = self.contest_service.get_active_contests(dsa_only=True)
+        elif status == "dsa":
+            contests = self.contest_service.get_filtered_contests(
+                days_ahead=30,
+                platform="All",
+                difficulty="All",
+                subscribed_only=False,
+                dsa_only=True
+            )
         else:
             # Get all upcoming contests for next 30 days
             contests = self.contest_service.get_filtered_contests(
                 days_ahead=30,
                 platform="All",
                 difficulty="All",
-                subscribed_only=False
+                subscribed_only=False,
+                dsa_only=False
             )
             
         PAGE_SIZE = 5
@@ -131,7 +204,14 @@ class ContestBot:
         end_idx = start_idx + PAGE_SIZE
         page_contests = contests[start_idx:end_idx]
         
-        title = "🟢 <b>Active & Ongoing Competitions</b>" if status == "active" else "📅 <b>Upcoming Competitions (Next 30 Days)</b>"
+        if status == "active":
+            title = "🟢 <b>Active & Ongoing Competitions</b>"
+        elif status == "dsa_active":
+            title = "🟢💻 <b>Active DSA Competitions</b>"
+        elif status == "dsa":
+            title = "💻 <b>Upcoming DSA Competitions (30 Days)</b>"
+        else:
+            title = "📅 <b>Upcoming Competitions (Next 30 Days)</b>"
         
         message = (
             f"{title}\n"
@@ -181,12 +261,22 @@ class ContestBot:
             
         keyboard.append(nav_row)
         
-        # Row 2: Status Toggle (Show Active vs Show Upcoming)
+        # Row 2: Status Toggle (Show Active vs Show Upcoming & DSA vs All)
+        toggle_row = []
         if status == "upcoming":
-            toggle_btn = InlineKeyboardButton("🟢 Show Active Competitions", callback_data="comp:0:active")
-        else:
-            toggle_btn = InlineKeyboardButton("📅 Show Upcoming (30 Days)", callback_data="comp:0:upcoming")
-        keyboard.append([toggle_btn])
+            toggle_row.append(InlineKeyboardButton("🟢 Show Active", callback_data="comp:0:active"))
+            toggle_row.append(InlineKeyboardButton("💻 DSA Only", callback_data="comp:0:dsa"))
+        elif status == "active":
+            toggle_row.append(InlineKeyboardButton("📅 Show Upcoming", callback_data="comp:0:upcoming"))
+            toggle_row.append(InlineKeyboardButton("💻 DSA Only", callback_data="comp:0:dsa_active"))
+        elif status == "dsa":
+            toggle_row.append(InlineKeyboardButton("🟢 Show Active DSA", callback_data="comp:0:dsa_active"))
+            toggle_row.append(InlineKeyboardButton("🌐 Show All", callback_data="comp:0:upcoming"))
+        elif status == "dsa_active":
+            toggle_row.append(InlineKeyboardButton("📅 Show Upcoming DSA", callback_data="comp:0:dsa"))
+            toggle_row.append(InlineKeyboardButton("🌐 Show All", callback_data="comp:0:active"))
+            
+        keyboard.append(toggle_row)
         
         # Row 3: Refresh
         keyboard.append([InlineKeyboardButton("🔄 Refresh List", callback_data=f"comp_ref:{page}:{status}")])
@@ -221,7 +311,7 @@ class ContestBot:
                 if action == "comp_ref":
                     await query.edit_message_text("🔄 <i>Updating competitions from CLIST... Please wait...</i>", parse_mode="HTML")
                     
-                    if status == "active":
+                    if status in ("active", "dsa_active"):
                         # Fetch active contests
                         contests = self.contest_service.get_upcoming_contests(force=True, active=True)
                     else:
@@ -244,6 +334,11 @@ class ContestBot:
         # Initialize database
         init_db()
         
+        # Start dummy HTTP server for Render health checks
+        self.http_server = None
+        if os.environ.get("PORT") or os.environ.get("RENDER"):
+            self.http_server = start_dummy_server()
+        
         # Start reminder scheduler
         self.reminder_scheduler = ReminderScheduler(self.application.bot)
         self.reminder_scheduler.start()
@@ -255,6 +350,9 @@ class ContestBot:
         """Stop the bot"""
         if self.reminder_scheduler:
             self.reminder_scheduler.stop()
+        if hasattr(self, "http_server") and self.http_server:
+            self.http_server.shutdown()
+            logger.info("Dummy HTTP server stopped!")
         logger.info("Contest bot stopped!")
 
 

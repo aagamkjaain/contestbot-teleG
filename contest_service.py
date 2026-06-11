@@ -145,7 +145,7 @@ class ContestService:
             self.session.rollback()
             return False
 
-    def get_active_contests(self):
+    def get_active_contests(self, dsa_only=False):
         """Get contests that are currently active (running)"""
         now = datetime.utcnow()
         try:
@@ -154,11 +154,14 @@ class ContestService:
                 Contest.start_time <= now,
                 Contest.end_time >= now
             )
+            if dsa_only:
+                dsa_platforms = ["Codeforces", "LeetCode", "CodeChef", "AtCoder", "TopCoder", "HackerEarth", "HackerRank"]
+                query = query.filter(Contest.platform.in_(dsa_platforms))
             return query.order_by(Contest.start_time).all()
         except Exception as e:
             print(f"Error getting active contests: {e}")
             return []
-    
+     
     def get_contests_for_user(self, user_id, days_ahead=7):
         """Get contests filtered by user's subscriptions"""
         from database import User
@@ -191,9 +194,9 @@ class ContestService:
             print(f"Error fetching user contests: {e}")
             return []
 
-    def get_filtered_contests(self, user_id=None, days_ahead=30, platform=None, difficulty=None, subscribed_only=False):
+    def get_filtered_contests(self, user_id=None, days_ahead=30, platform=None, difficulty=None, subscribed_only=False, dsa_only=False):
         """
-        Get contests filtered by platform, difficulty, and timeframe
+        Get contests filtered by platform, difficulty, timeframe, and DSA focus
         """
         from database import User, Subscription
         try:
@@ -212,6 +215,11 @@ class ContestService:
                     ]
                     if subscribed_platforms:
                         query = query.filter(Contest.platform.in_(subscribed_platforms))
+            
+            # DSA only filter
+            if dsa_only:
+                dsa_platforms = ["Codeforces", "LeetCode", "CodeChef", "AtCoder", "TopCoder", "HackerEarth", "HackerRank"]
+                query = query.filter(Contest.platform.in_(dsa_platforms))
             
             # Specific platform filter
             if platform and platform != "All":
