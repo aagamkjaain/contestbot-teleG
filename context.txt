@@ -1,0 +1,170 @@
+Step 2: Contest Data Source
+
+Do not scrape LeetCode and Codeforces directly.
+
+Use CLIST API.
+
+CLIST aggregates:
+
+LeetCode
+Codeforces
+CodeChef
+AtCoder
+TopCoder
+HackerEarth
+HackerRank
+
+and many more.
+
+Official website:
+
+CLIST.by
+
+Get:
+
+CLIENT_ID
+API_KEY
+
+API example:
+
+import requests
+
+url = "https://clist.by/api/v4/contest/"
+
+params = {
+    "upcoming": "true",
+    "format": "json"
+}
+
+headers = {
+    "Authorization":
+    f"ApiKey YOUR_USERNAME:YOUR_API_KEY"
+}
+
+response = requests.get(url, headers=headers, params=params)
+
+print(response.json())
+Step 3: Tech Stack
+Backend
+
+Python
+
+Libraries:
+
+pip install python-telegram-bot
+pip install requests
+pip install apscheduler
+pip install python-dotenv
+pip install sqlalchemy
+Step 4: Project Structure
+contest_bot/
+
+├── bot.py
+├── contest_service.py
+├── scheduler.py
+├── database.py
+├── config.py
+├── requirements.txt
+└── .env
+Step 5: Contest Service
+def get_upcoming_contests():
+    ...
+
+Returns:
+
+[
+ {
+   "name": "...",
+   "platform": "Codeforces",
+   "start": "...",
+   "url": "..."
+ }
+]
+Step 6: Telegram Commands
+/start
+async def start(update, context):
+    await update.message.reply_text(
+        "Welcome to Contest Tracker 🚀"
+    )
+/upcoming
+async def upcoming(update, context):
+    contests = get_upcoming_contests()
+
+    msg = ""
+
+    for c in contests[:10]:
+        msg += (
+            f"{c['name']}\n"
+            f"{c['platform']}\n"
+            f"{c['start']}\n"
+            f"{c['url']}\n\n"
+        )
+
+    await update.message.reply_text(msg)
+Step 7: Reminder System
+
+Store:
+
+users
+-----
+telegram_id
+platform
+reminder_time
+
+Example:
+
+User wants:
+Codeforces reminders
+
+30 mins before contest
+
+Scheduler checks every minute.
+
+If contest starts in:
+
+30 minutes
+
+Send:
+
+bot.send_message(
+ user_id,
+ "Codeforces Round starts in 30 mins!"
+)
+Step 8: Extra Features
+Difficulty Rating
+
+Show:
+
+Codeforces Round
+Expected Difficulty: Intermediate
+Calendar Export
+
+Generate:
+
+contest.ics
+
+User imports into Google Calendar.
+
+Platform Filters
+/subscribe codeforces
+/subscribe leetcode
+/unsubscribe codeforces
+Weekly Digest
+
+Every Sunday:
+
+7 contests this week
+
+Codeforces: 3
+LeetCode: 2
+AtCoder: 2
+Step 9: Deployment
+Easy Option
+
+Deploy on:
+
+Railway
+Render
+Fly.io
+
+Free tiers are usually enough for a contest bot.
